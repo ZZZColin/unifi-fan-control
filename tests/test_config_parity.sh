@@ -5,42 +5,40 @@
 # config updates go through config_set / check_param, not heredoc rewrites.
 ###############################################################################
 set -euo pipefail
-
+ 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DAEMON="$REPO_ROOT/fan-control.sh"
 WORK_DIR=$(mktemp -d)
-
+ 
 trap 'rm -rf "$WORK_DIR"' EXIT
-
+ 
 fail() {
     printf 'FAIL: %s\n' "$1" >&2
     exit 1
 }
-
+ 
 assert_eq() {
     local actual="$1"
     local expected="$2"
     local message="$3"
-
+ 
     [[ "$actual" == "$expected" ]] || fail "${message}: expected ${expected}, got ${actual}"
 }
-
+ 
 assert_same_set() {
     local left="$1"
     local right="$2"
     local description="$3"
-
+ 
     if ! cmp -s "$left" "$right"; then
         printf 'FAIL: %s differ\n' "$description" >&2
         diff -u "$left" "$right" >&2 || true
         exit 1
     fi
 }
-
-for block in 1; do
-    : >"$WORK_DIR/heredoc-${block}"
-done
-
+ 
+: >"$WORK_DIR/heredoc-1"
+ 
 awk '
     /<<-DEFAULTS/ {
         block = 1
@@ -64,21 +62,19 @@ awk '
 ' "$DAEMON" | while read -r block parameter; do
     printf '%s\n' "$parameter" >>"$WORK_DIR/heredoc-${block}"
 done
-
-for block in 1; do
-    sort -u "$WORK_DIR/heredoc-${block}" >"$WORK_DIR/heredoc-${block}.sorted"
-    assert_eq "$(wc -l <"$WORK_DIR/heredoc-${block}.sorted")" "19" \
-        "heredoc ${block} parameter count"
-done
-
+ 
+sort -u "$WORK_DIR/heredoc-1" >"$WORK_DIR/heredoc-1.sorted"
+assert_eq "$(wc -l <"$WORK_DIR/heredoc-1.sorted")" "19" \
+    "heredoc 1 parameter count"
+ 
 sed -n 's/^DEFAULT_\([A-Z][A-Z0-9_]*\)=.*/\1/p' "$DAEMON" | sort -u >"$WORK_DIR/defaults.sorted"
 sed -n 's/^[[:space:]]*check_param "\([A-Z][A-Z0-9_]*\)".*/\1/p' "$DAEMON" | sort -u >"$WORK_DIR/check-params.sorted"
-
+ 
 assert_eq "$(wc -l <"$WORK_DIR/defaults.sorted")" "19" "DEFAULT declaration count"
 assert_eq "$(wc -l <"$WORK_DIR/check-params.sorted")" "19" "check_param declaration count"
 assert_same_set "$WORK_DIR/heredoc-1.sorted" "$WORK_DIR/defaults.sorted" \
     "config heredocs and DEFAULT declarations"
 assert_same_set "$WORK_DIR/heredoc-1.sorted" "$WORK_DIR/check-params.sorted" \
     "config heredocs and check_param declarations"
-
+ 
 printf '✓ All 19 config parameters are present in the default heredoc, DEFAULT_ and check_param\n'
