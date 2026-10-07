@@ -19,9 +19,6 @@ jobs:
             bash -n "$f"
           done
       - name: ShellCheck
-        # Not run locally while preparing the fork, so it does not block the build
-        # until you have looked at its findings once. Remove continue-on-error then.
-        continue-on-error: true
         run: shellcheck -S warning fan-control.sh install.sh uninstall.sh tests/*.sh
       - name: Fork regression tests
         # Run explicitly so they are covered even if run-tests.sh changes
