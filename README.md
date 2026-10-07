@@ -4,15 +4,13 @@ Advanced temperature management for Ubiquiti UniFi OS devices with fan control.
 
 > **This is a fork of [iceTeaSA/unifi-fan-control](https://github.com/iceteaSA/unifi-fan-control)** with safety, installer and uninstaller fixes (see [Changes in this fork](#changes-in-this-fork)). The fixes are covered by sandboxed regression tests that drive the real scripts with a simulated fan controller. **They have not yet been verified on real UniFi hardware.** Test on a non-critical device first. Original design and code by the upstream author; this fork keeps the MIT license and the original copyright notice.
 
-Upstream confirmed working on: UCG-Max, UCG-Fibre, UXG-Fibre, UDM-SE, UDM-Pro-Max, UDR7, UNVR.
+Upstream confirmed working on: UCG-Max, UCG-Fibre, UXG-Fibre, UDM-SE, UDM-Pro-Max, UDR7, UNVR
 
 **Not supported: UniFi switches (USW line).** They run BusyBox `sh` with no bash, no
 `ubnt-systool` for temperature, and no systemd, and their fans are firmware controlled
 rather than exposed as writable `/sys/class/hwmon/*/pwm*`. Confirmed on a USW Enterprise
 48 PoE running 7.5.9: no `/sys/class/hwmon/*/pwm*` entries exist at all. This needs
 consoles and gateways running full UniFi OS.
-
-> In every command below, replace `YOUR_USERNAME` with the GitHub account that hosts this fork.
 
 ## Features
 - **Four Operational States**:
@@ -44,7 +42,7 @@ consoles and gateways running full UniFi OS.
 
 ## Installation
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/unifi-fan-control/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ZZZColin/unifi-fan-control/main/install.sh | sudo bash
 ```
 
 By default, the installer resolves the latest tagged release, downloads its
@@ -56,25 +54,22 @@ After restarting the service, the installer waits `FAN_CONTROL_HEALTH_WAIT` seco
 restores the previous files and the previous enabled/active state of the service. A
 Ctrl-C or a dropped SSH session during the install rolls back the same way.
 
-> A tagged release must exist in your fork before the one-line "latest release" install works.
-> Until the first release is published, use a checkout (see Manual Installation).
-
 ### Pin a Release
 
 Use a version when you need a known build:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/unifi-fan-control/main/install.sh | sudo FAN_CONTROL_VERSION=v1.2.0 bash
+curl -fsSL https://raw.githubusercontent.com/ZZZColin/unifi-fan-control/main/install.sh | sudo FAN_CONTROL_VERSION=v1.3.0 bash
 ```
 
-`FAN_CONTROL_VERSION` accepts `v1.2.0` or `1.2.0`. Pinned installs verify the
+`FAN_CONTROL_VERSION` accepts `v1.3.0` or `1.2.0`. Pinned installs verify the
 matching release tarball before replacing installed files.
 
 To go one step further, pin the expected SHA-256 of the tarball, taken from a source you
 trust (for example the release page, read on another machine):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/unifi-fan-control/main/install.sh | sudo FAN_CONTROL_VERSION=v1.2.0 FAN_CONTROL_EXPECTED_SHA256=<64 hex characters> bash
+curl -fsSL https://raw.githubusercontent.com/ZZZColin/unifi-fan-control/main/install.sh | sudo FAN_CONTROL_VERSION=v1.3.0 FAN_CONTROL_EXPECTED_SHA256=<64 hex characters> bash
 ```
 
 `FAN_CONTROL_EXPECTED_SHA256` only applies to verified release downloads. On an
@@ -94,7 +89,7 @@ resolver cannot be fixed immediately, a one-time fallback is available for one
 specific tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/unifi-fan-control/v1.2.0/install.sh | sudo FAN_CONTROL_ALLOW_UNVERIFIED=v1.2.0 bash
+curl -fsSL https://raw.githubusercontent.com/ZZZColin/unifi-fan-control/v1.3.0/install.sh | sudo FAN_CONTROL_ALLOW_UNVERIFIED=v1.3.0 bash
 ```
 
 This bypasses SHA256 verification for that install. It still validates the
@@ -105,7 +100,7 @@ downloaded files before writing them, but it is not the normal or preferred path
 For development builds:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/unifi-fan-control/main/install.sh | sudo FAN_CONTROL_BRANCH=feature/example bash
+curl -fsSL https://raw.githubusercontent.com/ZZZColin/unifi-fan-control/main/install.sh | sudo FAN_CONTROL_BRANCH=feature/example bash
 ```
 
 Branch installs download individual files from GitHub and are unverified. Do
@@ -116,7 +111,7 @@ not use them for production routers. `FAN_CONTROL_VERSION` and
 If you prefer to inspect the code before installation:
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/unifi-fan-control.git
+git clone https://github.com/ZZZColin/unifi-fan-control.git
 cd unifi-fan-control
 
 # Run the installer from a checkout or extracted release tarball
@@ -352,7 +347,7 @@ Re-run the installer. There is no auto-update: this runs as root, and a self-upd
 root daemon is a large attack surface for a fan controller.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/unifi-fan-control/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ZZZColin/unifi-fan-control/main/install.sh | sudo bash
 ```
 
 **Your config is preserved.** `/data/fan-control/config` is never replaced by an
