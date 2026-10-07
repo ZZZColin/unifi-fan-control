@@ -53,7 +53,7 @@ wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "255" 10 || fail "hottest SATA 
 for device in sda sdb sdc sdd; do
     assert_contains "$(cat "$SANDBOX/syslog")" "Detected .*${device}" "startup should report ${device}: "
 done
-assert_contains "$(cat "$SANDBOX/drive_calls")" "smartctl -j -a .*sda" "SATA polling must read the SMART temperature: "
+assert_contains "$(cat "$SANDBOX/drive_calls")" "smartctl -n standby -j -a .*sda" "SATA polling must read the SMART temperature: "
 assert_contains "$(cat "$SANDBOX/syslog")" "sdb drives floor" "hottest drive should be attributable: "
 
 echo "  ✓ Scenario ${scenario}: hottest of four SATA drives controls the floor"
@@ -104,8 +104,10 @@ prepare_drive_polling
 start_daemon
 wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "255" 10 || fail "initial hot drive did not establish MAX_PWM floor"
 touch "$SANDBOX/smartctl_fail_sda"
-wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "214" 20 || fail "remaining drives did not maintain the floor"
-assert_contains "$(cat "$SANDBOX/syslog")" "sda read failed; excluding it from floor" "failed drive should be logged once: "
+# The failed drive is held at its last temperature for DRIVE_FAIL_HOLD_POLLS (3)
+# polls, so the floor falls to the peers only after the third failed poll.
+wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "214" 75 || fail "remaining drives did not maintain the floor"
+assert_contains "$(cat "$SANDBOX/syslog")" "sda read failed or device in standby; excluding it from floor" "failed drive should be logged once: "
 rm "$SANDBOX/smartctl_fail_sda"
 wait_for_log "DRIVE: .*sda read recovered" 20 || fail "recovered drive was not logged"
 
@@ -129,7 +131,8 @@ wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "255" 10 || fail "hot drives di
 for device in sda sdb sdc sdd; do
     touch "$SANDBOX/smartctl_fail_${device}"
 done
-wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "0" 20 || fail "all unreadable drives did not clear the floor"
+# All drives are held for 3 failed polls (15s interval) before the floor clears.
+wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "0" 75 || fail "all unreadable drives did not clear the floor"
 assert_eq "$(get_pwm)" "0" "all unreadable drive reads must not force MAX_PWM: "
 
 echo "  ✓ Scenario ${scenario}: all failed drives clear the floor without MAX_PWM"

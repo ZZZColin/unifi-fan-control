@@ -28,7 +28,7 @@ JSON
 start_daemon
 wait_for_log 'DRIVE:.*wctemp=83°C' 10 || fail "smartctl warning threshold was not logged"
 assert_contains "$(cat "$SANDBOX/syslog")" 'wctemp=83°C' "smartctl threshold should retain Celsius format: "
-assert_contains "$(cat "$SANDBOX/drive_calls")" 'smartctl -j -a' "smartctl must request the NVMe controller threshold: "
+assert_contains "$(cat "$SANDBOX/drive_calls")" 'smartctl -n standby -j -a' "smartctl must request the NVMe controller threshold: "
 
 echo "  ✓ Scenario ${scenario}: smartctl NVMe threshold is reported"
 

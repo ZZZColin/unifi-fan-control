@@ -47,7 +47,7 @@ prepare_drive_polling
 start_daemon
 wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "0" 10 || fail "unreadable drive should not establish a floor"
 /bin/sleep 31
-assert_log_count "sda read failed; excluding it from floor" "1"
+assert_log_count "sda read failed or device in standby; excluding it from floor" "1"
 assert_log_count "All cached drives unreadable; floor disabled" "1"
 rm "$SANDBOX/smartctl_fail_sda"
 wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "255" 20 || fail "recovered drive did not establish a floor without restart"
