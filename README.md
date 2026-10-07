@@ -4,7 +4,7 @@ Advanced temperature management for Ubiquiti UniFi OS devices with fan control.
 
 > **This is a fork of [iceTeaSA/unifi-fan-control](https://github.com/iceteaSA/unifi-fan-control)** with safety, installer and uninstaller fixes (see [Changes in this fork](#changes-in-this-fork)). The fixes are covered by sandboxed regression tests that drive the real scripts with a simulated fan controller. **They have not yet been verified on real UniFi hardware.** Test on a non-critical device first. Original design and code by the upstream author; this fork keeps the MIT license and the original copyright notice.
 
-Upstream confirmed working on: UCG-Max, UCG-Fibre, UXG-Fibre, UDM-SE, UDM-Pro-Max, UDR7, UNVR
+Upstream confirmed working on: UCG-Max, UCG-Fibre, UXG-Fibre, UDM-SE, UDM-Pro-Max, UDR7, UNVR.
 
 **Not supported: UniFi switches (USW line).** They run BusyBox `sh` with no bash, no
 `ubnt-systool` for temperature, and no systemd, and their fans are firmware controlled
