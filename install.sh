@@ -7,29 +7,55 @@ PAYLOAD_FILES=(fan-control.sh uninstall.sh fan-control.service VERSION)
 readonly MAX_ARCHIVE_BYTES=$((2 * 1024 * 1024))
 readonly MAX_EXPANDED_ARCHIVE_BYTES=$((4 * 1024 * 1024))
 readonly MAX_PAYLOAD_FILE_BYTES=$((512 * 1024))
-REPO_OWNER="iceteaSA"
+readonly MAX_CHECKSUM_FILE_BYTES=65536
+# CHANGE THIS to your fork's owner/name.
+REPO_OWNER="${FAN_CONTROL_REPO_OWNER:-iceteaSA}"
 REPO_NAME="unifi-fan-control"
 INSTALL_DIR="${FAN_CONTROL_INSTALL_DIR:-/data/fan-control}"
 SERVICE_FILE="${FAN_CONTROL_SERVICE_FILE:-/etc/systemd/system/fan-control.service}"
 SYSTEMCTL="${FAN_CONTROL_SYSTEMCTL:-systemctl}"
 RELEASE_BASE_URL="${FAN_CONTROL_RELEASE_BASE_URL:-https://github.com/$REPO_OWNER/$REPO_NAME/releases}"
+# Seconds to watch the service after start before declaring success (0 disables).
+HEALTH_WAIT="${FAN_CONTROL_HEALTH_WAIT:-8}"
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR=""
 WORK_DIR="$(mktemp -d)"
 RESOLVED_VERSION=""
 INSTALL_SOURCE=""
 SERVICE_WAS_ACTIVE=0
+SERVICE_WAS_ENABLED=0
 UNVERIFIED_RELEASE=0
 DESTINATIONS=()
 NEW_FILES=()
 BACKUPS=()
 HAD_ORIGINAL=()
+REPLACED=()
+KEEP_BACKUP=()
+
+# curl hardening: always bounded in time; HTTPS-only (including redirects) when
+# talking to the real GitHub release host. Test overrides with other schemes
+# keep the default protocol set.
+CURL_COMMON=(-fsSL --connect-timeout 15)
+CURL_PROTO=()
+if [[ "$RELEASE_BASE_URL" == https://* ]]; then
+    CURL_PROTO=(--proto '=https' --proto-redir '=https' --tlsv1.2)
+fi
 
 cleanup_work_dir() {
     rm -rf "$WORK_DIR"
 }
 
-trap cleanup_work_dir EXIT
+# Staged .new files must not be left behind if a signal arrives before the
+# rollback trap is armed (cleanup_destination_temps is defined below; it is only
+# called when the shell exits, by which time it exists).
+cleanup_on_exit() {
+    cleanup_work_dir
+    if declare -F cleanup_destination_temps >/dev/null 2>&1; then
+        cleanup_destination_temps
+    fi
+}
+trap cleanup_on_exit EXIT
+trap 'exit 130' INT TERM HUP
 
 if [[ -f "$SCRIPT_PATH" ]]; then
     SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
@@ -85,9 +111,12 @@ validate_payload() {
         fi
     done
 
-    if ! bash -n "$payload_dir/fan-control.sh" "$payload_dir/uninstall.sh"; then
-        fail "Payload scripts failed syntax validation"
-    fi
+    # bash -n with several files only checks the first one, so check each separately
+    for filename in fan-control.sh uninstall.sh; do
+        if ! bash -n "$payload_dir/$filename"; then
+            fail "Payload scripts failed syntax validation: $filename"
+        fi
+    done
 
     payload_version=$(cat "$payload_dir/VERSION")
     if ! is_semver "$payload_version"; then
@@ -129,9 +158,11 @@ validate_archive_header_types() {
     # ulimit -f kills gzip with SIGXFSZ past the cap. -c 0 because UniFi OS uses a
     # plain core_pattern filename, so the kill would drop a core into the working
     # directory -- writing to disk during the check that exists to protect it.
+    # bash counts ulimit -f in 1024-byte blocks (512 in POSIX mode, which only
+    # makes the cap tighter). If the limits cannot be set, refuse to decompress.
     if ! (
-        ulimit -c 0
-        ulimit -f "$((MAX_EXPANDED_ARCHIVE_BYTES / 512 + 1))"
+        ulimit -c 0 || exit 1
+        ulimit -f "$((MAX_EXPANDED_ARCHIVE_BYTES / 1024 + 1))" || exit 1
         gzip -dc "$archive" >"$raw_archive"
     ); then
         raw_size=$(wc -c <"$raw_archive")
@@ -196,9 +227,16 @@ copy_local_payload() {
 
     for filename in "${PAYLOAD_FILES[@]}"; do
         if [[ ! -f "$SCRIPT_DIR/$filename" ]]; then
+            if [[ -f "$SCRIPT_DIR/fan-control.sh" ]]; then
+                echo "Note: $SCRIPT_DIR is missing $filename; ignoring the local files and downloading a release" >&2
+            fi
             return 1
         fi
     done
+
+    if [[ -n "${FAN_CONTROL_EXPECTED_SHA256:-}" ]]; then
+        echo "WARNING: FAN_CONTROL_EXPECTED_SHA256 only applies to release downloads; ignored for local files" >&2
+    fi
 
     mkdir -p "$payload_dir"
     for filename in "${PAYLOAD_FILES[@]}"; do
@@ -231,7 +269,7 @@ probe_unverified_fallback() {
     local fallback_error="$WORK_DIR/fallback-curl-error"
     local fallback_status
 
-    if curl -fsSL --connect-timeout 10 --max-time 20 -o /dev/null "$fallback_url" 2>"$fallback_error"; then
+    if curl "${CURL_COMMON[@]}" --max-time 20 -o /dev/null "$fallback_url" 2>"$fallback_error"; then
         echo "Error: Unverified fallback host raw.githubusercontent.com is reachable for $tag" >&2
         return 0
     else
@@ -300,9 +338,17 @@ download_unverified_payload() {
     local payload_dir="$WORK_DIR/payload"
     local base_url="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$ref"
 
+    # An unverified path has no archive to compare with the pin; do not let the
+    # pin be silently ignored.
+    if [[ -n "${FAN_CONTROL_EXPECTED_SHA256:-}" ]]; then
+        fail "FAN_CONTROL_EXPECTED_SHA256 cannot be applied to an unverified install ($source)"
+    fi
+
     mkdir -p "$payload_dir"
     for filename in "${PAYLOAD_FILES[@]}"; do
-        if ! curl -fsSL "$base_url/$filename" -o "$payload_dir/$filename"; then
+        if ! curl "${CURL_COMMON[@]}" --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --max-time 60 --max-filesize "$MAX_PAYLOAD_FILE_BYTES" \
+            "$base_url/$filename" -o "$payload_dir/$filename"; then
             fail "Failed to download $filename from $source"
         fi
     done
@@ -327,7 +373,7 @@ handle_verified_download_failure() {
     diagnose_release_download_failure "$tag" "$curl_status" "$curl_error"
     if [[ -z "${FAN_CONTROL_ALLOW_UNVERIFIED:-}" ]]; then
         echo "Error: The verified download failed. To install $tag without SHA256 verification, run:" >&2
-        echo "curl -fsSL https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$tag/install.sh | sudo FAN_CONTROL_ALLOW_UNVERIFIED=$tag bash" >&2
+        echo "curl -fsSL https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$tag/install.sh | sudo FAN_CONTROL_VERSION=${tag#v} FAN_CONTROL_ALLOW_UNVERIFIED=$tag bash" >&2
         exit 1
     fi
     download_unverified_release "$tag"
@@ -341,20 +387,27 @@ download_verified_release() {
     local payload_dir="$WORK_DIR/payload"
     local expected_checksum
     local actual_checksum
+    local pinned_checksum="${FAN_CONTROL_EXPECTED_SHA256:-}"
     local filename
     local curl_error="$WORK_DIR/release-curl-error"
     local curl_status
 
     validate_unverified_consent "$tag"
 
-    if curl -fsSL --max-filesize "$MAX_ARCHIVE_BYTES" "$RELEASE_BASE_URL/download/$tag/$archive_name" -o "$archive" 2>"$curl_error"; then
+    if [[ -n "$pinned_checksum" ]] && ! [[ "$pinned_checksum" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+        fail "FAN_CONTROL_EXPECTED_SHA256 must be a 64-character hex SHA-256"
+    fi
+
+    if curl "${CURL_COMMON[@]}" "${CURL_PROTO[@]}" --max-time 120 --max-filesize "$MAX_ARCHIVE_BYTES" \
+        "$RELEASE_BASE_URL/download/$tag/$archive_name" -o "$archive" 2>"$curl_error"; then
         :
     else
         curl_status=$?
         handle_verified_download_failure "$tag" "$curl_status" "$curl_error"
         return 0
     fi
-    if curl -fsSL "$RELEASE_BASE_URL/download/$tag/SHA256SUMS" -o "$checksum_file" 2>"$curl_error"; then
+    if curl "${CURL_COMMON[@]}" "${CURL_PROTO[@]}" --max-time 60 --max-filesize "$MAX_CHECKSUM_FILE_BYTES" \
+        "$RELEASE_BASE_URL/download/$tag/SHA256SUMS" -o "$checksum_file" 2>"$curl_error"; then
         :
     else
         curl_status=$?
@@ -375,6 +428,12 @@ download_verified_release() {
     actual_checksum=$(sha256sum "$archive" | awk '{print $1}')
     if [[ "${actual_checksum,,}" != "${expected_checksum,,}" ]]; then
         fail "Checksum mismatch for $archive_name"
+    fi
+    # Optional out-of-band pin: SHA256SUMS comes from the same origin as the
+    # archive, so it only proves integrity. A checksum you obtained some other
+    # way (FAN_CONTROL_EXPECTED_SHA256) also protects against a tampered release.
+    if [[ -n "$pinned_checksum" && "${actual_checksum,,}" != "${pinned_checksum,,}" ]]; then
+        fail "Archive SHA-256 ($actual_checksum) does not match FAN_CONTROL_EXPECTED_SHA256"
     fi
 
     # GNU tar 1.34 on device preserves traversal paths and flags hardlinks; BusyBox
@@ -410,7 +469,7 @@ resolve_latest_release() {
     local resolved_url
     local tag
 
-    if ! resolved_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$RELEASE_BASE_URL/latest"); then
+    if ! resolved_url=$(curl "${CURL_COMMON[@]}" "${CURL_PROTO[@]}" --max-time 30 -o /dev/null -w '%{url_effective}' "$RELEASE_BASE_URL/latest"); then
         fail "Failed to resolve the latest release"
     fi
     tag="${resolved_url##*/}"
@@ -422,7 +481,12 @@ cleanup_destination_temps() {
     local index
 
     for index in "${!NEW_FILES[@]}"; do
-        rm -f "${NEW_FILES[$index]}" "${BACKUPS[$index]}"
+        rm -f "${NEW_FILES[$index]}"
+        # A backup that could not be moved back is the only copy of the old
+        # file; never delete it.
+        if [[ "${KEEP_BACKUP[$index]:-0}" != 1 ]]; then
+            rm -f "${BACKUPS[$index]}"
+        fi
     done
 }
 
@@ -431,11 +495,19 @@ stage_destination_files() {
     local destination
     local new_file
 
-    mkdir -p "$INSTALL_DIR" "$(dirname "$SERVICE_FILE")" || return 1
+    (umask 077 && mkdir -p "$INSTALL_DIR") || return 1
+    mkdir -p "$(dirname "$SERVICE_FILE")" || return 1
 
     for filename in "${PAYLOAD_FILES[@]}"; do
         destination=$(payload_destination "$filename")
         new_file="${destination}.new.$$"
+        # Register the temp file before creating it so a failed cp/sed is cleaned up
+        DESTINATIONS+=("$destination")
+        NEW_FILES+=("$new_file")
+        BACKUPS+=("${destination}.rollback.$$")
+        HAD_ORIGINAL+=(0)
+        REPLACED+=(0)
+        KEEP_BACKUP+=(0)
         if ! cp "$WORK_DIR/payload/$filename" "$new_file"; then
             return 1
         fi
@@ -447,20 +519,36 @@ stage_destination_files() {
         else
             chmod 0644 "$new_file" || return 1
         fi
-        DESTINATIONS+=("$destination")
-        NEW_FILES+=("$new_file")
-        BACKUPS+=("${destination}.rollback.$$")
-        HAD_ORIGINAL+=(0)
+        # The unit asks systemd for a watchdog keep-alive, which the script sends
+        # with systemd-notify. Without that tool the watchdog would kill a healthy
+        # service, so drop the two lines on hosts that do not have it.
+        if [[ "$filename" == "fan-control.service" ]] && ! command -v systemd-notify >/dev/null 2>&1; then
+            echo "WARNING: systemd-notify not found; installing the unit without WatchdogSec" >&2
+            sed -i '/^WatchdogSec=/d;/^NotifyAccess=/d' "$new_file" || return 1
+        fi
     done
 }
 
+# Undo, newest first. Only entries that were actually touched are undone: a
+# destination whose replacement never happened still holds the original file
+# and must not be deleted. Flags are cleared once handled so a second call
+# (rollback after a partial restore) cannot undo the restore.
 restore_previous_payload() {
     local index
 
     for ((index = ${#DESTINATIONS[@]} - 1; index >= 0; index--)); do
-        rm -f "${DESTINATIONS[$index]}" "${NEW_FILES[$index]}"
+        rm -f "${NEW_FILES[$index]}"
+        if [[ "${REPLACED[$index]}" == 1 ]]; then
+            rm -f "${DESTINATIONS[$index]}"
+            REPLACED[index]=0
+        fi
         if [[ "${HAD_ORIGINAL[$index]}" == 1 ]]; then
-            mv "${BACKUPS[$index]}" "${DESTINATIONS[$index]}" || true
+            if mv "${BACKUPS[$index]}" "${DESTINATIONS[$index]}"; then
+                HAD_ORIGINAL[index]=0
+            else
+                KEEP_BACKUP[index]=1
+                echo "Error: could not restore ${DESTINATIONS[$index]}; the previous version is kept at ${BACKUPS[$index]}" >&2
+            fi
         fi
     done
 }
@@ -470,13 +558,19 @@ replace_destination_files() {
 
     for index in "${!DESTINATIONS[@]}"; do
         if [[ -e "${DESTINATIONS[$index]}" || -L "${DESTINATIONS[$index]}" ]]; then
+            # Flag first: a signal between the mv and the flag would otherwise
+            # let cleanup delete the backup, the only copy of the original.
+            HAD_ORIGINAL[index]=1
             if ! mv "${DESTINATIONS[$index]}" "${BACKUPS[$index]}"; then
+                HAD_ORIGINAL[index]=0
                 restore_previous_payload
                 return 1
             fi
-            HAD_ORIGINAL[index]=1
         fi
+        # Flag first, so a signal right after the mv still gets the new file rolled back
+        REPLACED[index]=1
         if ! mv "${NEW_FILES[$index]}" "${DESTINATIONS[$index]}"; then
+            REPLACED[index]=0
             restore_previous_payload
             return 1
         fi
@@ -503,6 +597,15 @@ enforce_install_permissions() {
 }
 
 rollback_install() {
+    # Stop the new (failed) service. Disable it only if it was not enabled before
+    # this install, so a fresh install does not leave a dangling enabled unit but
+    # an existing enabled-but-stopped one keeps its state.
+    if ((!SERVICE_WAS_ACTIVE)); then
+        "$SYSTEMCTL" stop fan-control.service >/dev/null 2>&1 || true
+        if ((!SERVICE_WAS_ENABLED)); then
+            "$SYSTEMCTL" disable fan-control.service >/dev/null 2>&1 || true
+        fi
+    fi
     restore_previous_payload
     "$SYSTEMCTL" daemon-reload >/dev/null 2>&1 || true
     if ((SERVICE_WAS_ACTIVE)); then
@@ -511,15 +614,50 @@ rollback_install() {
     cleanup_destination_temps
 }
 
+# `systemctl restart` returns as soon as the process is forked, so a daemon that
+# dies a moment later (no PWM device, bad config, watchdog) would otherwise be
+# reported as a successful install. Watch it for a few seconds: it must stay
+# active and must not restart.
+wait_for_service_healthy() {
+    local waited=0
+    local restarts_before
+    local restarts_after
+
+    ((HEALTH_WAIT > 0)) || return 0
+
+    restarts_before=$("$SYSTEMCTL" show -p NRestarts --value fan-control.service 2>/dev/null || true)
+    while ((waited < HEALTH_WAIT)); do
+        sleep 1
+        waited=$((waited + 1))
+        if ! "$SYSTEMCTL" is-active --quiet fan-control.service; then
+            return 1
+        fi
+    done
+    restarts_after=$("$SYSTEMCTL" show -p NRestarts --value fan-control.service 2>/dev/null || true)
+    if [[ "$restarts_before" != "$restarts_after" ]]; then
+        return 1
+    fi
+    return 0
+}
+
 install_validated_payload() {
+    local readback_file
+
     if ! stage_destination_files; then
         cleanup_destination_temps
         fail "Failed to stage installation files"
     fi
 
+    # Ctrl-C or a dropped SSH session during the install (including the health
+    # wait) must not leave a half-installed system behind.
+    # Armed only after the previous service state is recorded.
     if "$SYSTEMCTL" is-active --quiet fan-control.service; then
         SERVICE_WAS_ACTIVE=1
     fi
+    if "$SYSTEMCTL" is-enabled --quiet fan-control.service 2>/dev/null; then
+        SERVICE_WAS_ENABLED=1
+    fi
+    trap 'rollback_install; exit 130' INT TERM HUP
 
     if ! replace_destination_files; then
         cleanup_destination_temps
@@ -554,15 +692,24 @@ install_validated_payload() {
         rollback_install
         fail "Installed VERSION readback failed"
     fi
-    if ! bash -n "$INSTALL_DIR/fan-control.sh" "$INSTALL_DIR/uninstall.sh"; then
+    for readback_file in fan-control.sh uninstall.sh; do
+        if ! bash -n "$INSTALL_DIR/$readback_file"; then
+            rollback_install
+            fail "Installed scripts failed syntax readback: $readback_file"
+        fi
+    done
+    if ! wait_for_service_healthy; then
+        echo "Error: service did not stay healthy; recent log:" >&2
+        journalctl -u fan-control.service -n 15 --no-pager 2>/dev/null >&2 || true
         rollback_install
-        fail "Installed scripts failed syntax readback"
+        fail "Service did not become active and stay running"
     fi
     if ! "$SYSTEMCTL" is-active --quiet fan-control.service; then
         rollback_install
         fail "Service did not become active"
     fi
 
+    trap - INT TERM HUP
     cleanup_destination_temps
 }
 
@@ -578,6 +725,18 @@ fi
 if ! command -v gzip >/dev/null 2>&1; then
     fail "gzip is required but not found"
 fi
+
+if ! [[ "$HEALTH_WAIT" =~ ^[0-9]+$ ]]; then
+    fail "FAN_CONTROL_HEALTH_WAIT must be a non-negative integer (seconds), got: '$HEALTH_WAIT'"
+fi
+# Leading zeros (08, 09) are invalid octal in bash arithmetic. Drop them first,
+# then cap the length so a huge number cannot wrap around in 64-bit arithmetic.
+HEALTH_WAIT="${HEALTH_WAIT#"${HEALTH_WAIT%%[!0]*}"}"
+HEALTH_WAIT="${HEALTH_WAIT:-0}"
+if ((${#HEALTH_WAIT} > 4)); then
+    fail "FAN_CONTROL_HEALTH_WAIT is too large (maximum 9999 seconds)"
+fi
+HEALTH_WAIT=$((HEALTH_WAIT))
 
 VERSION_INPUT="${FAN_CONTROL_VERSION:-}"
 BRANCH="${FAN_CONTROL_BRANCH:-}"

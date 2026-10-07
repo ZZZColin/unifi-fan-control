@@ -11,6 +11,17 @@ ExecStart=/data/fan-control/fan-control.sh
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
+# /usr, /boot and /etc read-only for this service. If the service fails to
+# start on your firmware, delete this line first.
+ProtectSystem=full
+# UniFi OS writes core files into the working directory; never do that.
+LimitCORE=0
+# fan-control.sh sends WATCHDOG=1 once per loop (and between drive reads) with
+# systemd-notify. A hung loop is killed and restarted (the restart probes the
+# fans at full speed). 300s covers CHECK_INTERVAL (max 60s) plus slow drive
+# reads. install.sh removes these two lines if systemd-notify is not available.
+WatchdogSec=300
+NotifyAccess=all
 Restart=always
 RestartSec=5
 # 24h window for log rate limiting
