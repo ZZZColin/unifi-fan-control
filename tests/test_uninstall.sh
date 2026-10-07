@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-# Uninstaller behavior tests — sandbox every path the root-owned script writes.
+# Uninstaller behavior tests - sandbox every path the root-owned script writes.
 ###############################################################################
 set -euo pipefail
 
@@ -86,7 +86,7 @@ test_class_directory_pwm_reset() {
 
     run_uninstaller
 
-    assert_eq "$(cat "$FAN_CONTROL_HWMON_BASE/hwmon0/pwm1")" "0" \
+    assert_eq "$(cat "$FAN_CONTROL_HWMON_BASE/hwmon0/pwm1")" "91" \
         "strategy 1 PWM reset: "
     assert_system_files_removed
     printf '✓ Strategy 1 reset class-directory PWM and removed sandbox paths\n'
@@ -100,7 +100,7 @@ test_raw_device_pwm_reset() {
 
     run_uninstaller
 
-    assert_eq "$(cat "$SANDBOX/raw-device/pwm1")" "0" \
+    assert_eq "$(cat "$SANDBOX/raw-device/pwm1")" "91" \
         "strategy 2 PWM reset: "
     assert_system_files_removed
     printf '✓ Strategy 2 reset raw-device PWM and removed sandbox paths\n'

@@ -533,7 +533,7 @@ test_asset_host_dns_failure_explains_the_redirect() {
     assert_contains "$output" "GitHub redirects release downloads to release-assets.githubusercontent.com" "redirect diagnosis: "
     assert_contains "$output" "resolver problem, not a fault in the installer or release" "resolver diagnosis: "
     assert_contains "$output" "Unverified fallback host raw.githubusercontent.com is reachable for v1.2.3" "fallback reachability: "
-    assert_contains "$output" "curl -fsSL https://raw.githubusercontent.com/iceteaSA/unifi-fan-control/v1.2.3/install.sh | sudo FAN_CONTROL_ALLOW_UNVERIFIED=v1.2.3 bash" "consent command: "
+    assert_contains "$output" "curl -fsSL https://raw.githubusercontent.com/iceteaSA/unifi-fan-control/v1.2.3/install.sh | sudo FAN_CONTROL_VERSION=1.2.3 FAN_CONTROL_ALLOW_UNVERIFIED=v1.2.3 bash" "consent command: "
 }
 
 test_http_release_failure_does_not_blame_dns() {
@@ -767,14 +767,14 @@ test_verified_release_installs_and_preserves_config() {
     make_release_fixture "$CASE_DIR" "$MOCK_VERSION"
     printf 'MIN_TEMP=48\n' >"$INSTALL_DIR/config"
 
-    output=$(install_environment FAN_CONTROL_VERSION=1.2.3)
+    output=$(install_environment FAN_CONTROL_VERSION=1.2.3 FAN_CONTROL_HEALTH_WAIT=0)
 
     assert_file_set
     assert_eq "$(stat -c%a "$INSTALL_DIR")" "700" "install directory mode: "
     assert_eq "$(cat "$INSTALL_DIR/VERSION")" "$MOCK_VERSION" "installed release version: "
     assert_eq "$(cat "$INSTALL_DIR/config")" "MIN_TEMP=48" "config preservation: "
     assert_eq "$(stat -c%a "$INSTALL_DIR/config")" "600" "installed config mode: "
-    assert_eq "$(cat "$SYSTEMCTL_LOG")" $'is-active --quiet fan-control.service\ndaemon-reload\nenable --now fan-control.service\nis-active --quiet fan-control.service' "systemctl order: "
+    assert_eq "$(cat "$SYSTEMCTL_LOG")" $'is-active --quiet fan-control.service\nis-enabled --quiet fan-control.service\ndaemon-reload\nenable --now fan-control.service\nis-active --quiet fan-control.service' "systemctl order: "
     assert_eq "$output" $'Installing fan-control v1.2.3 from verified release v1.2.3\nPerforming fresh installation\nInstallation successful!\nConfiguration: nano '"$INSTALL_DIR"$'/config\nStatus check: journalctl -u fan-control.service -f' "verified release output: "
 }
 

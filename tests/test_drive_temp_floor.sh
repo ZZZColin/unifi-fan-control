@@ -145,7 +145,9 @@ start_daemon
 wait_for_file_gt "$SANDBOX/hwmon/hwmon0/pwm1" 0 10 || fail "hot drive should establish a floor"
 touch "$SANDBOX/nvme_fail"
 wait_for_log "DRIVE:.*read failed" 20 || fail "failed drive read was not logged"
-wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "0" 10 || fail "failed drive read should drop floor"
+# The drive is held at its last temperature for 3 failed polls (15s interval)
+# before the floor drops.
+wait_for_file_value "$SANDBOX/hwmon/hwmon0/pwm1" "0" 75 || fail "failed drive read should drop floor"
 assert_eq "$(get_pwm)" "0" "failed drive read must not force MAX_PWM: "
 
 echo "  ✓ Scenario ${scenario}: drive read failure drops floor without MAX_PWM"

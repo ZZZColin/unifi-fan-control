@@ -1,6 +1,8 @@
 #!/bin/bash
 ###############################################################################
-# Static guard against config-rewrite heredocs dropping a parameter.
+# Static guard against the config default heredoc (and DEFAULT_/check_param
+# declarations) dropping a parameter. The fork has a single heredoc: later
+# config updates go through config_set / check_param, not heredoc rewrites.
 ###############################################################################
 set -euo pipefail
 
@@ -35,7 +37,7 @@ assert_same_set() {
     fi
 }
 
-for block in 1 2 3; do
+for block in 1; do
     : >"$WORK_DIR/heredoc-${block}"
 done
 
@@ -63,24 +65,20 @@ awk '
     printf '%s\n' "$parameter" >>"$WORK_DIR/heredoc-${block}"
 done
 
-for block in 1 2 3; do
+for block in 1; do
     sort -u "$WORK_DIR/heredoc-${block}" >"$WORK_DIR/heredoc-${block}.sorted"
-    assert_eq "$(wc -l <"$WORK_DIR/heredoc-${block}.sorted")" "18" \
+    assert_eq "$(wc -l <"$WORK_DIR/heredoc-${block}.sorted")" "19" \
         "heredoc ${block} parameter count"
 done
 
 sed -n 's/^DEFAULT_\([A-Z][A-Z0-9_]*\)=.*/\1/p' "$DAEMON" | sort -u >"$WORK_DIR/defaults.sorted"
 sed -n 's/^[[:space:]]*check_param "\([A-Z][A-Z0-9_]*\)".*/\1/p' "$DAEMON" | sort -u >"$WORK_DIR/check-params.sorted"
 
-assert_eq "$(wc -l <"$WORK_DIR/defaults.sorted")" "18" "DEFAULT declaration count"
-assert_eq "$(wc -l <"$WORK_DIR/check-params.sorted")" "18" "check_param declaration count"
-assert_same_set "$WORK_DIR/heredoc-1.sorted" "$WORK_DIR/heredoc-2.sorted" \
-    "initial and migration config parameter sets"
-assert_same_set "$WORK_DIR/heredoc-1.sorted" "$WORK_DIR/heredoc-3.sorted" \
-    "initial and corrected-values config parameter sets"
+assert_eq "$(wc -l <"$WORK_DIR/defaults.sorted")" "19" "DEFAULT declaration count"
+assert_eq "$(wc -l <"$WORK_DIR/check-params.sorted")" "19" "check_param declaration count"
 assert_same_set "$WORK_DIR/heredoc-1.sorted" "$WORK_DIR/defaults.sorted" \
     "config heredocs and DEFAULT declarations"
 assert_same_set "$WORK_DIR/heredoc-1.sorted" "$WORK_DIR/check-params.sorted" \
     "config heredocs and check_param declarations"
 
-printf '✓ All 18 config parameters are present in every rewrite path\n'
+printf '✓ All 19 config parameters are present in the default heredoc, DEFAULT_ and check_param\n'

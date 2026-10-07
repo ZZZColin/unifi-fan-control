@@ -31,7 +31,7 @@ pid_file_valid || fail "PID file should exist and contain daemon PID"
 echo "  ✓ PID file exists with correct daemon PID while running"
 
 # ── 2. Second instance rejected ──────────────────────────────────────────────
-# Start a second copy of the daemon — it should fail to acquire the lock
+# Start a second copy of the daemon - it should fail to acquire the lock
 bash "$FAN_CONTROL_SCRIPT" &
 second_pid=$!
 /bin/sleep 0.5
@@ -47,7 +47,7 @@ assert_contains "$(cat "$SANDBOX/syslog")" "Another instance" "Should log 'Anoth
 
 echo "  ✓ Second instance rejected by flock guard"
 
-# ── 3. Cleanup on SIGTERM: fans reset to 0, PID file removed ─────────────────
+# ── 3. Cleanup on SIGTERM: fans left at EXIT_PWM (default 91), PID file removed ─────────────────
 # Verify the FIRST daemon is still running
 assert_eq "$(daemon_alive && echo "alive" || echo "dead")" "alive" "First daemon should still be running"
 
@@ -61,9 +61,9 @@ wait "$DAEMON_PID" 2>/dev/null || true
 DAEMON_PID=""
 
 # After SIGTERM, cleanup should have run:
-#   - PWM should be 0
+#   - PWM should be EXIT_PWM (default 91; the fork no longer hands fans back at 0)
 pwm_after=$(get_pwm)
-assert_eq "$pwm_after" "0" "PWM should be 0 after SIGTERM cleanup, got $pwm_after"
+assert_eq "$pwm_after" "91" "PWM should be EXIT_PWM (91) after SIGTERM cleanup, got $pwm_after"
 
 #   - PID file should be removed
 pid_file="${FAN_CONTROL_PID_FILE:-$SANDBOX/pid}"
@@ -71,7 +71,7 @@ if [[ -f "$pid_file" ]]; then
     fail "PID file should be removed after cleanup, but still exists: $(cat "$pid_file" 2>/dev/null || echo '<unreadable>')"
 fi
 
-echo "  ✓ SIGTERM cleanup: PWM=0, PID file removed"
+echo "  ✓ SIGTERM cleanup: PWM=EXIT_PWM (91), PID file removed"
 
 teardown_sandbox
 
