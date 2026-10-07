@@ -9,7 +9,7 @@ readonly MAX_EXPANDED_ARCHIVE_BYTES=$((4 * 1024 * 1024))
 readonly MAX_PAYLOAD_FILE_BYTES=$((512 * 1024))
 readonly MAX_CHECKSUM_FILE_BYTES=65536
 # CHANGE THIS to your fork's owner/name.
-REPO_OWNER="${FAN_CONTROL_REPO_OWNER:-iceteaSA}"
+REPO_OWNER="${FAN_CONTROL_REPO_OWNER:-ZZZColin}"
 REPO_NAME="unifi-fan-control"
 INSTALL_DIR="${FAN_CONTROL_INSTALL_DIR:-/data/fan-control}"
 SERVICE_FILE="${FAN_CONTROL_SERVICE_FILE:-/etc/systemd/system/fan-control.service}"
